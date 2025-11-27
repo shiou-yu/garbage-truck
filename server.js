@@ -6,14 +6,10 @@ import fs from 'fs'
 
 dotenv.config()
 
-// 🔹 檢查環境變數
-console.log('🔍 Secret loaded:', !!process.env.CHANNEL_SECRET)
-console.log('🔍 Token loaded:', !!process.env.CHANNEL_ACCESS_TOKEN)
-
 /* -------------------- 基本設定 -------------------- */
 const app = express()
 
-// 健康檢查 (Render & LINE 驗證需要)
+// 健康檢查（Render + LINE Verify 必要）
 app.get('/', (req, res) => {
   res.status(200).send('OK')
 })
@@ -24,15 +20,15 @@ const bot = linebot({
   channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN,
 })
 
-// ⭐⭐ 正確的 parser（你之前漏掉）
+// ⭐ 正確 parser（你之前漏掉）
 const linebotParser = bot.parser()
 
-// ⭐⭐ 正確的 webhook 路由
+// ⭐ 正確 webhook 路由
 app.post('/webhook', linebotParser, (req, res) => {
   res.sendStatus(200)
 })
 
-/* -------------------- 台北市垃圾車資料 -------------------- */
+/* -------------------- API 設定 -------------------- */
 const DATASET_ID = 'a6e90031-7ec4-4089-afb5-361a4efe7202'
 const BASE_URL = `https://data.taipei/api/v1/dataset/${DATASET_ID}?scope=resourceAquire`
 
@@ -61,7 +57,7 @@ function haversine(lat1, lon1, lat2, lon2) {
   return R * c
 }
 
-/* -------------------- Flex 寫檔 -------------------- */
+/* -------------------- 寫 Flex JSON Log -------------------- */
 function saveFlexToFile(flexObj, prefix = 'flex') {
   try {
     const dir = './flex_logs'
@@ -69,8 +65,8 @@ function saveFlexToFile(flexObj, prefix = 'flex') {
 
     const timestamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15)
     const filename = `${dir}/${prefix}_${timestamp}.json`
-    fs.writeFileSync(filename, JSON.stringify(flexObj, null, 2), 'utf-8')
 
+    fs.writeFileSync(filename, JSON.stringify(flexObj, null, 2), 'utf-8')
     console.log(`📝 已輸出 Flex 至：${filename}`)
   } catch (err) {
     console.error('❌ Flex 寫檔錯誤：', err)
@@ -80,6 +76,7 @@ function saveFlexToFile(flexObj, prefix = 'flex') {
 /* -------------------- 抓資料 -------------------- */
 async function fetchTrashPoints({ district, village, pageSize = 500, maxPages = 10 }) {
   const results = []
+
   for (let i = 0; i < maxPages; i++) {
     const offset = i * pageSize
     const url = `${BASE_URL}&limit=${pageSize}&offset=${offset}`
@@ -102,6 +99,7 @@ async function fetchTrashPoints({ district, village, pageSize = 500, maxPages = 
   }
 
   results.sort((a, b) => Number(a['抵達時間']) - Number(b['抵達時間']))
+
   return results
 }
 
@@ -109,6 +107,7 @@ async function fetchTrashPoints({ district, village, pageSize = 500, maxPages = 
 function makeFlexBubbles(rows) {
   const max = Math.min(rows.length, 10)
   const bubbles = []
+
   for (let i = 0; i < max; i++) {
     const r = rows[i]
     const arrive = hhmmToClock(r['抵達時間'])
@@ -151,7 +150,7 @@ bot.on('message', async (event) => {
   try {
     console.log('📩 收到使用者訊息：', event.message)
 
-    // 🟢 顯示快速回覆
+    // 🟢 開場提示 / 關鍵字
     if (
       event.message.type === 'text' &&
       /(垃圾車|查詢|查清運|start|hi|hello)/i.test(event.message.text)
@@ -179,6 +178,7 @@ bot.on('message', async (event) => {
         const lng = parseFloat(r['經度'])
         return { ...r, distance: haversine(latitude, longitude, lat, lng) }
       })
+
       withDistance.sort((a, b) => a.distance - b.distance)
       const nearest = withDistance.slice(0, 5)
 
@@ -191,17 +191,20 @@ bot.on('message', async (event) => {
 
       saveFlexToFile(flexMsg, 'location')
       await event.reply(flexMsg)
-      console.log('✅ 已回覆使用者位置查詢結果')
+      console.log('✅ 已回覆使用者位置查詢')
       return
     }
 
     // 🏙 使用者輸入行政區
     if (event.message.type === 'text') {
       const text = event.message.text.trim()
+
+      // ⭐ 修正區域判斷（使用 m[0]）
       const m = text.match(
         /(中正區|大同區|中山區|松山區|大安區|萬華區|信義區|士林區|北投區|內湖區|南港區|文山區)/
       )
-      const district = m ? m[1] : null
+      const district = m ? m[0] : null
+
       const vm = text.match(/([\u4e00-\u9fa5]{1,4}里)/)
       const village = vm ? vm[1] : null
 
@@ -234,9 +237,8 @@ bot.on('message', async (event) => {
       }
 
       saveFlexToFile(flex, district)
-      console.log('📤 準備回覆 Flex 給使用者...')
       await event.reply(flex)
-      console.log('✅ 已回覆 Flex 給使用者')
+      console.log('✅ 已回覆行政區查詢結果')
     }
   } catch (err) {
     console.error('❌ LINE message error:', err?.response?.data || err.message)
