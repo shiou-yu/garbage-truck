@@ -5,9 +5,9 @@ import dotenv from 'dotenv'
 
 dotenv.config()
 
-/* ====================
+/* =====================
    基本設定
-==================== */
+===================== */
 
 const app = express()
 const PORT = process.env.PORT || 10000
@@ -16,26 +16,61 @@ app.get('/', (req, res) => {
   res.status(200).send('OK')
 })
 
-/* ====================
+/* =====================
    LINE Bot
-==================== */
+===================== */
 
 const bot = linebot({
   channelSecret: process.env.CHANNEL_SECRET,
-  channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN,
+  channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN
 })
 
-// ⚠️ 只用 parser，不自己回 res
+// ✅ webhook（只用 parser）
 app.post('/webhook', bot.parser())
 
-/* ====================
+/* =====================
    台北垃圾車資料
-==================== */
+===================== */
 
 const DATASET_ID = 'a6e90031-7ec4-4089-afb5-361a4efe7202'
 const BASE_URL = `https://data.taipei/api/v1/dataset/${DATASET_ID}?scope=resourceAquire`
 
-let CACHED_POINTS = []
+let TRASH_POINTS = []
+
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371
+  const toRad = d => d * Math.PI / 180
+  const dLat = toRad(lat2 - lat1)
+  const dLon = toRad(lon2 - lon1)
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) *
+    Math.cos(toRad(lat2)) *
+    Math.sin(dLon / 2) ** 2
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
+
+async function loadTrashData() {
+  const result = []
+  const limit = 500
+
+  for (let offset = 0; offset < 5000; offset += limit) {
+    const r = await axios.get(`${BASE_URL}&limit=${limit}&offset=${offset}`)
+    const rows = r.data?.result?.results || []
+    if (!rows.length) break
+    result.push(...rows)
+    if (offset + rows.length >= r.data.result.count) break
+  }
+
+  TRASH_POINTS = result.filter(r => r['緯度'] && r['經度'])
+  console.log(`✅ 已載入垃圾車資料：${TRASH_POINTS.length} 筆`)
+}
+
+loadTrashData()
+
+/* =====================
+   Flex 組裝
+===================== */
 
 function hhmmToClock(hhmm) {
   if (!hhmm) return ''
@@ -43,181 +78,110 @@ function hhmmToClock(hhmm) {
   return `${s.slice(0, 2)}:${s.slice(2)}`
 }
 
-function toMapUrl(lat, lng, name = '') {
-  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-    `${lat},${lng} ${name}`
-  )}`
-}
-
-function haversine(lat1, lon1, lat2, lon2) {
-  const R = 6371
-  const toRad = d => (d * Math.PI) / 180
-  const dLat = toRad(lat2 - lat1)
-  const dLon = toRad(lon2 - lon1)
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) *
-      Math.cos(toRad(lat2)) *
-      Math.sin(dLon / 2) ** 2
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-  return R * c
-}
-
-async function fetchAllTrashPoints() {
-  const results = []
-  const pageSize = 500
-
-  for (let offset = 0; offset < 5000; offset += pageSize) {
-    const url = `${BASE_URL}&limit=${pageSize}&offset=${offset}`
-    const r = await axios.get(url)
-    const payload = r.data?.result
-    const rows = payload?.results || []
-
-    if (!rows.length) break
-    results.push(...rows)
-
-    const total = payload?.count ?? 0
-    if (offset + rows.length >= total) break
-  }
-
-  // ✅ 一定過濾掉沒有座標的
-  return results.filter(r => r['緯度'] && r['經度'])
-}
-
-// ✅ 啟動時只載一次
-async function initData() {
-  CACHED_POINTS = await fetchAllTrashPoints()
-  console.log(`✅ 已載入垃圾車資料：${CACHED_POINTS.length} 筆`)
-}
-initData()
-
-/* ====================
-   Flex bubble（安全版）
-==================== */
-
-function makeFlexBubbles(rows) {
-  return rows.map(r => {
-    const arrive = hhmmToClock(r['抵達時間'])
-    const leave = hhmmToClock(r['離開時間'])
-    const mapUrl = toMapUrl(r['緯度'], r['經度'], r['地點'])
-
-    return {
-      type: 'bubble',
-      body: {
-        type: 'box',
-        layout: 'vertical',
-        contents: [
-          {
-            type: 'text',
-            text: r['地點'] || '垃圾車停靠點',
-            weight: 'bold',
-            size: 'lg',
-            wrap: true
-          },
-          {
-            type: 'text',
-            text: `📍 ${r['行政區'] || ''}`,
-            size: 'sm',
-            color: '#555'
-          },
-          {
-            type: 'text',
-            text: `⏰ ${arrive} - ${leave}`,
-            size: 'sm'
-          },
-          {
-            type: 'text',
-            text: `📏 約 ${Math.round(r.distance * 1000)} 公尺`,
-            size: 'sm',
-            color: '#1A73E8'
+function makeBubbles(rows) {
+  return rows.map(r => ({
+    type: 'bubble',
+    body: {
+      type: 'box',
+      layout: 'vertical',
+      contents: [
+        {
+          type: 'text',
+          text: r['地點'],
+          weight: 'bold',
+          size: 'lg',
+          wrap: true
+        },
+        {
+          type: 'text',
+          text: `📍 ${r['行政區']}`,
+          size: 'sm',
+          color: '#555'
+        },
+        {
+          type: 'text',
+          text: `⏰ ${hhmmToClock(r['抵達時間'])} - ${hhmmToClock(r['離開時間'])}`,
+          size: 'sm'
+        },
+        {
+          type: 'text',
+          text: `📏 約 ${Math.round(r.distance * 1000)} 公尺`,
+          size: 'sm',
+          color: '#1A73E8'
+        }
+      ]
+    },
+    footer: {
+      type: 'box',
+      layout: 'vertical',
+      contents: [
+        {
+          type: 'button',
+          style: 'primary',
+          action: {
+            type: 'uri',
+            label: '開啟地圖',
+            uri: `https://www.google.com/maps/search/?query=${r['緯度']},${r['經度']}`
           }
-        ]
-      },
-      footer: {
-        type: 'box',
-        layout: 'vertical',
-        contents: [
-          {
-            type: 'button',
-            style: 'primary',
-            action: {
-              type: 'uri',
-              label: '開啟地圖',
-              uri: mapUrl
-            }
-          }
-        ]
-      }
+        }
+      ]
     }
-  })
+  }))
 }
 
-/* ====================
-   Message handler（重點）
-==================== */
+/* =====================
+   Message Handler（核心）
+===================== */
 
 bot.on('message', async event => {
-  try {
-    console.log('收到訊息類型：', event.message.type)
+  console.log('收到訊息類型：', event.message.type)
 
-    /* ✅ 定位事件（唯一正式輸出） */
-    if (event.message.type === 'location') {
-      const { latitude, longitude } = event.message
+  /* ✅ 只處理定位 */
+  if (event.message.type === 'location') {
 
-      // ✅ 先回「一定會看到的字」
-      await event.reply(
-        `✅ 已收到定位\n(${latitude.toFixed(5)}, ${longitude.toFixed(5)})`
-      )
+    const { latitude, longitude } = event.message
 
-      // ✅ 算距離
-      const nearest = CACHED_POINTS
-        .map(r => {
-          const d = haversine(
-            latitude,
-            longitude,
-            parseFloat(r['緯度']),
-            parseFloat(r['經度'])
-          )
-          return { ...r, distance: isNaN(d) ? 999 : d }
-        })
-        .sort((a, b) => a.distance - b.distance)
-        .slice(0, 3)
+    const nearest = TRASH_POINTS
+      .map(r => ({
+        ...r,
+        distance: haversine(
+          latitude,
+          longitude,
+          parseFloat(r['緯度']),
+          parseFloat(r['經度'])
+        )
+      }))
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, 3)
 
-      // ✅ 如果真的找不到
-      if (!nearest.length) return
-
-      const bubbles = makeFlexBubbles(nearest)
-
-      console.log('✅ Flex bubbles:', bubbles.length)
-
-      // ✅ 用 push（不是 reply）送 Flex，完全避開 reply 限制
-      await bot.push(event.source.userId, {
-        type: 'flex',
-        altText: '最近的垃圾車地點',
-        contents: {
-          type: 'carousel',
-          contents: bubbles
-        }
-      })
+    if (!nearest.length) {
+      await event.reply('附近沒有垃圾車資料')
       return
     }
 
-    /* ✅ 文字只提示，不影響流程 */
-    if (event.message.type === 'text') {
-      if (event.message.text.includes('垃圾')) {
-        await event.reply('🚛 請用「＋ → 位置資訊」傳送定位')
+    // ✅ 只 reply 一次，而且就是 Flex
+    await event.reply({
+      type: 'flex',
+      altText: '最近的垃圾車地點',
+      contents: {
+        type: 'carousel',
+        contents: makeBubbles(nearest)
       }
-      return
-    }
+    })
+    return
+  }
 
-  } catch (err) {
-    console.error('❌ 錯誤：', err)
+  /* ✅ 其他訊息（不影響定位） */
+  if (event.message.type === 'text') {
+    if (event.message.text.includes('垃圾')) {
+      await event.reply('🚛 請用「＋ → 位置資訊」傳送定位')
+    }
   }
 })
 
-/* ====================
+/* =====================
    啟動
-==================== */
+===================== */
 
 app.listen(PORT, () => {
   console.log(`✅ Bot running on port ${PORT}`)
