@@ -74,7 +74,7 @@ const HOME_FLEX = {
       { type: 'text', text: '垃圾車查詢', weight: 'bold', size: 'xl' },
       {
         type: 'text',
-        text: '傳送你的定位給我，查詢離你最近的一個垃圾車地點',
+        text: '請傳送定位以查詢離你最近的垃圾車',
         wrap: true,
         size: 'sm',
         color: '#555555'
@@ -98,13 +98,7 @@ const HOME_FLEX = {
 function makeResultFlex(place, time, distance) {
   return {
     type: 'bubble',
-    hero: {
-      type: 'image',
-      url: IMAGE_URL,
-      size: 'full',
-      aspectRatio: '20:13',
-      aspectMode: 'cover'
-    },
+    hero: HOME_FLEX.hero,
     body: {
       type: 'box',
       layout: 'vertical',
@@ -132,13 +126,13 @@ function makeResultFlex(place, time, distance) {
 
 bot.on('message', async (event) => {
   const type = event.message?.type
-  const text = event.message?.text?.trim()
+  const text = event.message?.text
 
   if (type === 'location') {
     const { latitude, longitude } = event.message
 
     let nearest = null
-    let min = Infinity
+    let minDistance = Infinity
 
     for (const r of TRASH_POINTS) {
       const lat = Number(r['緯度'])
@@ -146,8 +140,8 @@ bot.on('message', async (event) => {
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
 
       const d = haversine(latitude, longitude, lat, lng)
-      if (d < min) {
-        min = d
+      if (d < minDistance) {
+        minDistance = d
         nearest = r
       }
     }
@@ -157,11 +151,11 @@ bot.on('message', async (event) => {
       return
     }
 
-    const a = nearest['抵達時間']?.toString().padStart(4, '0')
-    const l = nearest['離開時間']?.toString().padStart(4, '0')
-    const time =
-      a && l
-        ? `${a.slice(0, 2)}:${a.slice(2)} - ${l.slice(0, 2)}:${l.slice(2)}`
+    const arrive = nearest['抵達時間']?.toString().padStart(4, '0')
+    const leave = nearest['離開時間']?.toString().padStart(4, '0')
+    const timeText =
+      arrive && leave
+        ? `${arrive.slice(0,2)}:${arrive.slice(2)} - ${leave.slice(0,2)}:${leave.slice(2)}`
         : '時間未提供'
 
     await event.reply({
@@ -169,20 +163,38 @@ bot.on('message', async (event) => {
       altText: '最近的垃圾車',
       contents: makeResultFlex(
         nearest['地點'] || '未知',
-        time,
-        Math.round(min * 1000)
+        timeText,
+        Math.round(minDistance * 1000)
       )
     })
     return
   }
 
-  if (type === 'text') {
+  if (type === 'text' && text === '查垃圾車') {
     await event.reply({
       type: 'flex',
       altText: '垃圾車查詢',
       contents: HOME_FLEX
     })
+    return
   }
+
+  await event.reply({
+    type: 'text',
+    text: '請選擇功能',
+    quickReply: {
+      items: [
+        {
+          type: 'action',
+          action: {
+            type: 'message',
+            label: '查垃圾車',
+            text: '查垃圾車'
+          }
+        }
+      ]
+    }
+  })
 })
 
 app.listen(PORT, () => {
