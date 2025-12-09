@@ -25,7 +25,7 @@ const bot = linebot({
   channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN,
 })
 
-// ✅ 只用 parser，不要自己 res
+// ✅ 只用 parser，不自己回 res
 app.post('/webhook', bot.parser())
 
 /* ====================
@@ -83,7 +83,7 @@ async function fetchAllTrashPoints() {
   return results.filter(r => r['緯度'] && r['經度'])
 }
 
-// ✅ 啟動時只載入一次
+// ✅ 啟動時載入一次
 async function initData() {
   CACHED_POINTS = await fetchAllTrashPoints()
   console.log(`✅ 已載入垃圾車資料：${CACHED_POINTS.length} 筆`)
@@ -91,7 +91,7 @@ async function initData() {
 initData()
 
 /* ====================
-   Flex 訊息
+   Flex 卡片
 ==================== */
 
 function makeFlexBubbles(rows) {
@@ -115,10 +115,9 @@ function makeFlexBubbles(rows) {
             size: 'lg',
             wrap: true
           },
-          { type: 'separator', margin: 'md' },
           {
             type: 'text',
-            text: `📍 ${r['行政區']} ${r['里別']}`,
+            text: `📍 ${r['行政區']}`,
             size: 'sm',
             color: '#555'
           },
@@ -160,14 +159,14 @@ function makeFlexBubbles(rows) {
 }
 
 /* ====================
-   事件處理（✅ 重點）
+   事件處理（重點）
 ==================== */
 
 bot.on('message', async event => {
   try {
     console.log('收到訊息類型：', event.message.type)
 
-    // ✅ 一定先處理定位
+    // ✅ 只有在「定位」才正式回垃圾車
     if (event.message.type === 'location') {
       const { latitude, longitude } = event.message
 
@@ -197,24 +196,26 @@ bot.on('message', async event => {
       return
     }
 
-    // ✅ 再處理文字
+    // ✅ 文字只做提示，不「吃掉」定位流程
     if (event.message.type === 'text') {
-      await event.reply(
-        '請用 LINE 的「傳送位置」功能，我會幫你找最近的垃圾車'
-      )
+      if (event.message.text.includes('垃圾')) {
+        await event.reply(
+          '🚛 請用 LINE 的「＋ → 位置資訊」傳送定位，我會幫你查最近的垃圾車'
+        )
+      }
       return
     }
 
   } catch (err) {
-    console.error('❌ 發生錯誤：', err)
+    console.error('❌ 錯誤：', err)
     try {
-      await event.reply('系統發生錯誤，請稍後再試')
+      await event.reply('系統錯誤，請稍後再試')
     } catch {}
   }
 })
 
 /* ====================
-   啟動 Server
+   啟動
 ==================== */
 
 app.listen(PORT, () => {
