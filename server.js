@@ -56,10 +56,12 @@ async function loadTrashData() {
 
   for (let offset = 0; offset < 5000; offset += limit) {
     const r = await axios.get(`${BASE_URL}&limit=${limit}&offset=${offset}`)
-    const rows = r.data?.result?.results || []
+    const payload = r.data?.result
+    const rows = payload?.results || []
+
     if (!rows.length) break
     all.push(...rows)
-    if (offset + rows.length >= r.data.result.count) break
+    if (offset + rows.length >= payload.count) break
   }
 
   TRASH_POINTS = all.filter(r => r['緯度'] && r['經度'])
@@ -69,58 +71,65 @@ async function loadTrashData() {
 loadTrashData()
 
 /* =====================
-   核心邏輯：定位 → 最近 1 筆
+   核心邏輯
 ===================== */
 
 bot.on('message', async (event) => {
   console.log('收到訊息類型：', event.message.type)
 
-  // 只處理定位
-  if (event.message.type !== 'location') return
-
-  const { latitude, longitude } = event.message
-
-  let nearest = null
-  let minDistance = Infinity
-
-  for (const r of TRASH_POINTS) {
-    const lat = Number(String(r['緯度']).trim())
-    const lng = Number(String(r['經度']).trim())
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
-
-    const d = haversine(latitude, longitude, lat, lng)
-
-    if (d < minDistance) {
-      minDistance = d
-      nearest = r
-    }
-  }
-
-  if (!nearest) {
-    await event.reply('找不到附近的垃圾車資料')
+  // ① 回覆提示（text）
+  if (event.message.type === 'text') {
+    await event.reply(
+      '垃圾車查詢\n' +
+      '請傳送定位以查詢最近的垃圾車'
+    )
     return
   }
 
-  // 時間處理
-  const arrive = nearest['抵達時間']
-    ? nearest['抵達時間'].toString().padStart(4, '0')
-    : null
-  const leave = nearest['離開時間']
-    ? nearest['離開時間'].toString().padStart(4, '0')
-    : null
+  // ② 回覆結果（location）
+  if (event.message.type === 'location') {
+    const { latitude, longitude } = event.message
 
-  const timeText =
-    arrive && leave
-      ? `${arrive.slice(0, 2)}:${arrive.slice(2)} - ${leave.slice(0, 2)}:${leave.slice(2)}`
-      : '時間未提供'
+    let nearest = null
+    let minDistance = Infinity
 
-  // ✅ 最精簡回覆：地點 / 時間 / 距離
-  const replyText =
-    `${nearest['地點'] || '未知地點'}\n` +
-    `${timeText}\n` +
-    `${Math.round(minDistance * 1000)} 公尺`
+    for (const r of TRASH_POINTS) {
+      const lat = Number(String(r['緯度']).trim())
+      const lng = Number(String(r['經度']).trim())
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
 
-  await event.reply(replyText)
+      const d = haversine(latitude, longitude, lat, lng)
+      if (d < minDistance) {
+        minDistance = d
+        nearest = r
+      }
+    }
+
+    if (!nearest) {
+      await event.reply('找不到附近的垃圾車資料')
+      return
+    }
+
+    const arrive = nearest['抵達時間']
+      ? nearest['抵達時間'].toString().padStart(4, '0')
+      : null
+    const leave = nearest['離開時間']
+      ? nearest['離開時間'].toString().padStart(4, '0')
+      : null
+
+    const timeText =
+      arrive && leave
+        ? `${arrive.slice(0, 2)}:${arrive.slice(2)} - ${leave.slice(0, 2)}:${leave.slice(2)}`
+        : '時間未提供'
+
+    const replyText =
+      '最近的垃圾車資訊\n\n' +
+      `地點：${nearest['地點'] || '未知地點'}\n` +
+      `時間：${timeText}\n` +
+      `距離：約 ${Math.round(minDistance * 1000)} 公尺`
+
+    await event.reply(replyText)
+  }
 })
 
 /* =====================
