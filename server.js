@@ -8,9 +8,7 @@ dotenv.config()
 const app = express()
 const PORT = process.env.PORT || 10000
 
-app.get('/', (req, res) => {
-  res.status(200).send('OK')
-})
+app.get('/', (req, res) => res.send('OK'))
 
 const bot = linebot({
   channelSecret: process.env.CHANNEL_SECRET,
@@ -19,9 +17,11 @@ const bot = linebot({
 
 app.post('/webhook', bot.parser())
 
+const IMAGE_URL =
+  'https://raw.githubusercontent.com/shiou-yu/garbage-truck/main/img/2107.i126.021.F.m005.c9.garbage.jpg'
+
 const DATASET_ID = 'a6e90031-7ec4-4089-afb5-361a4efe7202'
-const BASE_URL =
-  `https://data.taipei/api/v1/dataset/${DATASET_ID}?scope=resourceAquire`
+const BASE_URL = `https://data.taipei/api/v1/dataset/${DATASET_ID}?scope=resourceAquire`
 
 let TRASH_POINTS = []
 
@@ -60,7 +60,7 @@ const HOME_FLEX = {
   type: 'bubble',
   hero: {
     type: 'image',
-    url: 'https://raw.githubusercontent.com/shiou-yu/garbage-truck/main/img/2107.i126.021.F.m005.c9.garbage.jpg',
+    url: IMAGE_URL,
     size: 'full',
     aspectRatio: '20:13',
     aspectMode: 'cover'
@@ -70,12 +70,7 @@ const HOME_FLEX = {
     layout: 'vertical',
     spacing: 'md',
     contents: [
-      {
-        type: 'text',
-        text: '垃圾車查詢',
-        weight: 'bold',
-        size: 'xl'
-      },
+      { type: 'text', text: '垃圾車查詢', weight: 'bold', size: 'xl' },
       {
         type: 'text',
         text: '請傳送定位以查詢離你最近的垃圾車',
@@ -93,34 +88,60 @@ const HOME_FLEX = {
       {
         type: 'button',
         style: 'primary',
-        action: {
-          type: 'location',
-          label: '傳送定位'
-        }
+        action: { type: 'location', label: '傳送定位' }
       }
     ]
   }
 }
 
-bot.on('message', async (event) => {
-  if (event.message.type === 'text') {
-    await event.reply({
-      type: 'flex',
-      altText: '垃圾車查詢',
-      contents: HOME_FLEX
-    })
-    return
+function makeResultFlex(place, time, distance) {
+  return {
+    type: 'bubble',
+    hero: {
+      type: 'image',
+      url: IMAGE_URL,
+      size: 'full',
+      aspectRatio: '20:13',
+      aspectMode: 'cover'
+    },
+    body: {
+      type: 'box',
+      layout: 'vertical',
+      spacing: 'md',
+      contents: [
+        { type: 'text', text: '最近的垃圾車', weight: 'bold', size: 'lg' },
+        { type: 'text', text: `地點：${place}`, wrap: true, size: 'sm' },
+        { type: 'text', text: `時間：${time}`, size: 'sm' },
+        { type: 'text', text: `距離：約 ${distance} 公尺`, size: 'sm' }
+      ]
+    },
+    footer: {
+      type: 'box',
+      layout: 'vertical',
+      contents: [
+        {
+          type: 'button',
+          style: 'primary',
+          action: { type: 'location', label: '再查一次' }
+        }
+      ]
+    }
   }
+}
 
-  if (event.message.type === 'location') {
+bot.on('message', async (event) => {
+  const type = event.message?.type
+  const text = event.message?.text
+
+  if (type === 'location') {
     const { latitude, longitude } = event.message
 
     let nearest = null
     let minDistance = Infinity
 
     for (const r of TRASH_POINTS) {
-      const lat = Number(String(r['緯度']).trim())
-      const lng = Number(String(r['經度']).trim())
+      const lat = Number(r['緯度'])
+      const lng = Number(r['經度'])
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
 
       const d = haversine(latitude, longitude, lat, lng)
@@ -135,26 +156,50 @@ bot.on('message', async (event) => {
       return
     }
 
-    const arrive = nearest['抵達時間']
-      ? nearest['抵達時間'].toString().padStart(4, '0')
-      : null
-    const leave = nearest['離開時間']
-      ? nearest['離開時間'].toString().padStart(4, '0')
-      : null
-
+    const arrive = nearest['抵達時間']?.toString().padStart(4, '0')
+    const leave = nearest['離開時間']?.toString().padStart(4, '0')
     const timeText =
       arrive && leave
         ? `${arrive.slice(0, 2)}:${arrive.slice(2)} - ${leave.slice(0, 2)}:${leave.slice(2)}`
         : '時間未提供'
 
-    const replyText =
-      `最近的垃圾車資訊\n\n` +
-      `地點：${nearest['地點'] || '未知'}\n` +
-      `時間：${timeText}\n` +
-      `距離：約 ${Math.round(minDistance * 1000)} 公尺`
-
-    await event.reply(replyText)
+    await event.reply({
+      type: 'flex',
+      altText: '最近的垃圾車',
+      contents: makeResultFlex(
+        nearest['地點'] || '未知',
+        timeText,
+        Math.round(minDistance * 1000)
+      )
+    })
+    return
   }
+
+  if (type === 'text' && text === '查垃圾車') {
+    await event.reply({
+      type: 'flex',
+      altText: '垃圾車查詢',
+      contents: HOME_FLEX
+    })
+    return
+  }
+
+  await event.reply({
+    type: 'text',
+    text: '請選擇功能',
+    quickReply: {
+      items: [
+        {
+          type: 'action',
+          action: {
+            type: 'message',
+            label: '查垃圾車',
+            text: '查垃圾車'
+          }
+        }
+      ]
+    }
+  })
 })
 
 app.listen(PORT, () => {
