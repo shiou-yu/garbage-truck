@@ -40,4 +40,10 @@
 
 - 雲端平台：Render  
 - 服務類型：Web Service  
-- Webhook URL：  
+- Webhook URL： 
+
+## 使用教學示意圖
+
+<p align="center">
+  <img src="./img/linebot.jpg" width="700">
+</p>
